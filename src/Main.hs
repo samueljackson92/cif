@@ -25,9 +25,13 @@ languageDef =
             , Token.caseSensitive  = False
            }
 
+lexer = Token.makeTokenParser languageDef
+identifier = Token.identifier lexer
+reserved   = Token.reserved
+whiteSpace = Token.whiteSpace lexer
+
 type DataBlockHeading = String
 type Tag = String
-type Value = String
 
 -- Character set definitions
 doubleQuote = '\"'
@@ -42,6 +46,8 @@ anyPrintCharset = ordinaryCharset ++ ['#' , '$' , '_' , ' ' , '\t' , ';' , '[' ,
 isOrdinaryChar :: Char -> Bool
 isOrdinaryChar c = elem c ordinaryCharset
 
+data Numeric = DoubleValue Double | IntValue Int deriving (Show)
+data Value = StringValue String | NumericValue Numeric deriving (Show)
 data DataItem = Item Tag Value deriving (Show)
 data DataBlock = DataBlock DataBlockHeading [DataItem] deriving (Show)
 data Cif = Cif [DataBlock] deriving (Show)
@@ -85,18 +91,27 @@ unQuotedString = do
 charString :: Parser String
 charString = unQuotedString <|> singleQuotedString <|> doubleQuotedString
 
-tag = char '_' *> nonBlankString <?> "tag"
 
-lexer = Token.makeTokenParser languageDef
-identifier = Token.identifier lexer
-reserved   = Token.reserved
-whiteSpace = Token.whiteSpace lexer
+parseInt :: Parser Int
+parseInt =
+    do
+       optional (char '+')
+       number <- many1 digit
+       return $ (read number :: Int)
+
+parseNumeric :: Parser Numeric
+parseNumeric = liftM IntValue parseInt
+
+parseValue :: Parser Value
+parseValue = liftM NumericValue parseNumeric <|> liftM StringValue charString
+
+tag = char '_' *> nonBlankString <?> "tag"
 
 dataItem :: Parser DataItem
 dataItem =
     do tag <- tag
        whiteSpace
-       value <- charString
+       value <- parseValue
        whiteSpace
        return $ Item tag value
 
