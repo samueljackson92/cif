@@ -9,7 +9,7 @@ import Text.ParserCombinators.Parsec
 import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as Token
-import Control.Applicative ((*>))
+import Control.Applicative hiding ((<|>), many)
 
 -- Parsec Language Definitions
 languageDef =
@@ -46,7 +46,7 @@ anyPrintCharset = ordinaryCharset ++ ['#' , '$' , '_' , ' ' , '\t' , ';' , '[' ,
 isOrdinaryChar :: Char -> Bool
 isOrdinaryChar c = elem c ordinaryCharset
 
-data Numeric = DoubleValue Double | IntValue Int deriving (Show)
+data Numeric = FloatValue Float | IntValue Int deriving (Show)
 data Value = StringValue String | NumericValue Numeric deriving (Show)
 data DataItem = Item Tag Value deriving (Show)
 data DataBlock = DataBlock DataBlockHeading [DataItem] deriving (Show)
@@ -89,18 +89,54 @@ unQuotedString = do
     return $ first : rest
 
 charString :: Parser String
-charString = unQuotedString <|> singleQuotedString <|> doubleQuotedString
+charString = singleQuotedString <|> doubleQuotedString <|> unQuotedString
 
 
-parseInt :: Parser Int
-parseInt =
-    do
-       optional (char '+')
-       number <- many1 digit
-       return $ (read number :: Int)
+-- parseInt :: Parser Int
+-- parseInt =
+--     do
+--        number <- (optional (char '-') >> many1 digit)
+--        return $ (read number :: Int)
+
+-- parseFloat :: Parser Float
+-- parseFloat =
+--     do
+--        number <- (intAndExponent <|> floatAndExponent1 <|> floatAndExponent2)
+--        return $ (read number ::Float)
+--     where
+--        intAndExponent = optional (char '-') >> many1 digit >> parseExponent <?> "Int fail"
+--        floatAndExponent1 = optional (char '-') >> many digit >> char '.' >> many1 digit >> parseExponent
+--        floatAndExponent2 = optional (char '-') >> many1 digit >> char '.' >> parseExponent
+
+-- parseExponent :: Parser String
+-- parseExponent =
+--     do
+--        e <- oneOf "eE"
+--        sign <- option '+' (char '-')
+--        exponent <- many1 digit
+--        return $ e : sign : exponent
+
+(<++>) a b = (++) <$> a <*> b
+(<:>) a b = (:) <$> a <*> b
+
+number = many1 digit
+
+plus = char '+' *> number
+
+minus = char '-' <:> number
+
+int = plus <|> minus <|> number
+
+integer = fmap rd $ int
+    where rd = read :: String -> Int
+
+float = fmap rd $ int <++> decimal <++> exponent
+    where rd       = read :: String -> Float
+          decimal  = char '.' <:> many digit
+          exponent = option "" $ oneOf "eE" <:> int
 
 parseNumeric :: Parser Numeric
-parseNumeric = liftM IntValue parseInt
+parseNumeric = liftM FloatValue (try float) <|> liftM IntValue integer
 
 parseValue :: Parser Value
 parseValue = liftM NumericValue parseNumeric <|> liftM StringValue charString
