@@ -27,7 +27,7 @@ languageDef =
 
 lexer = Token.makeTokenParser languageDef
 identifier = Token.identifier lexer
-reserved   = Token.reserved
+reserved   = Token.reserved lexer
 whiteSpace = Token.whiteSpace lexer
 
 type DataBlockHeading = String
@@ -48,7 +48,7 @@ isOrdinaryChar c = elem c ordinaryCharset
 
 data Numeric = FloatValue Float | IntValue Int deriving (Show)
 data Value = StringValue String | NumericValue Numeric deriving (Show)
-data DataItem = Item Tag Value deriving (Show)
+data DataItem = Item Tag Value | Items [DataItem] deriving (Show)
 data DataBlock = DataBlock DataBlockHeading [DataItem] deriving (Show)
 data Cif = Cif [DataBlock] deriving (Show)
 
@@ -65,7 +65,7 @@ nonBlankString :: Parser String
 nonBlankString = many (oneOf nonBlankCharset) <?> "non-blank string"
 
 anyPrintString :: Parser String
-anyPrintString = many (escape <|> oneOf anyPrintCharset) <?> "any print string"
+anyPrintString = many (try escape <|> oneOf anyPrintCharset) <?> "any print string"
 
 parseQuotedString :: Char -> Parser String
 parseQuotedString c =
@@ -88,38 +88,48 @@ unQuotedString = do
     rest <- many (oneOf anyPrintCharset)
     return $ first : rest
 
+textField :: Parser String
+textField =
+    do
+       whiteSpace
+       lines <- between (string ";\n") (char ';') (many (oneOf (textLeadCharset ++ "\n")))
+       return $ lines
+
 charString :: Parser String
-charString = singleQuotedString <|> doubleQuotedString <|> unQuotedString
+charString = singleQuotedString <|> doubleQuotedString <|> textField <|> unQuotedString
 
 
--- parseInt :: Parser Int
--- parseInt =
---     do
---        number <- (optional (char '-') >> many1 digit)
---        return $ (read number :: Int)
+parseLoop :: Parser [DataItem]
+parseLoop =
+    do reserved "LOOP_"
+       whiteSpace
+       headers <- readHeader
+       values <- parseLine `endBy1` endOfLine
+       return $ [Items (map makeItem (zip headers vs)) | vs <- values]
+    where
+        readHeader :: Parser [Tag]
+        readHeader = tag `endBy1` endOfLine
 
--- parseFloat :: Parser Float
--- parseFloat =
---     do
---        number <- (intAndExponent <|> floatAndExponent1 <|> floatAndExponent2)
---        return $ (read number ::Float)
---     where
---        intAndExponent = optional (char '-') >> many1 digit >> parseExponent <?> "Int fail"
---        floatAndExponent1 = optional (char '-') >> many digit >> char '.' >> many1 digit >> parseExponent
---        floatAndExponent2 = optional (char '-') >> many1 digit >> char '.' >> parseExponent
+        makeItem :: (String, Value) -> DataItem
+        makeItem (header, value) = Item header value
 
--- parseExponent :: Parser String
--- parseExponent =
---     do
---        e <- oneOf "eE"
---        sign <- option '+' (char '-')
---        exponent <- many1 digit
---        return $ e : sign : exponent
+        parseLine :: Parser [Value]
+        parseLine =
+            do values <- (try getNumber <|> getString) `sepBy1` char ' '
+               return $ values
+            where
+                getString = liftM StringValue (singleQuotedString <|> doubleQuotedString <|> (many (oneOf nonBlankCharset)))
+                getNumber = liftM NumericValue num
+                    where
+                        num =
+                            do n <- try parseNumeric
+                               lookAhead (char ' ')
+                               return $ n
 
 (<++>) a b = (++) <$> a <*> b
 (<:>) a b = (:) <$> a <*> b
 
-number = many1 digit
+number = try (many1 digit)
 
 plus = char '+' *> number
 
@@ -130,35 +140,36 @@ int = plus <|> minus <|> number
 integer = fmap rd $ int
     where rd = read :: String -> Int
 
-float = fmap rd $ int <++> decimal <++> exponent
+float = fmap rd $ int <++> decimal <++> exponent <++> brackets
     where rd       = read :: String -> Float
           decimal  = char '.' <:> many digit
           exponent = option "" $ oneOf "eE" <:> int
+          brackets = option "" $ do {char '('; v <- int; char ')'; return $ v }
 
 parseNumeric :: Parser Numeric
-parseNumeric = liftM FloatValue (try float) <|> liftM IntValue integer
+parseNumeric = liftM FloatValue (try float) <|> liftM IntValue (try integer)
 
 parseValue :: Parser Value
-parseValue = liftM NumericValue parseNumeric <|> liftM StringValue charString
+parseValue = try (do {v <- liftM NumericValue parseNumeric; lookAhead endOfLine; return $ v}) <|> liftM StringValue charString
 
 tag = char '_' *> nonBlankString <?> "tag"
 
 dataItem :: Parser DataItem
 dataItem =
-    do tag <- tag
-       whiteSpace
-       value <- parseValue
-       whiteSpace
-       return $ Item tag value
+        do tag <- tag
+           whiteSpace
+           value <- parseValue
+           whiteSpace
+           return $ Item tag value
 
 dataBlock :: Parser DataBlock
 dataBlock =
     do header <- identifier
        whiteSpace
-       items <- dataItems
-       return $ DataBlock header items
+       items <- many (dataItems <|> parseLoop)
+       return $ DataBlock header (concat items)
     where
-        dataItems = sepBy dataItem whiteSpace
+        dataItems = dataItem `sepBy1` whiteSpace
 
 cifBlock :: Parser Cif
 cifBlock =
