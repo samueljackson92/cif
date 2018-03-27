@@ -98,33 +98,25 @@ textField =
 charString :: Parser String
 charString = singleQuotedString <|> doubleQuotedString <|> textField <|> unQuotedString
 
+makeItem :: (String, Value) -> DataItem
+makeItem (header, value) = Item header value
 
 parseLoop :: Parser [DataItem]
 parseLoop =
     do reserved "LOOP_"
        whiteSpace
-       headers <- readHeader
+       headers <- parseHeader
        values <- parseLine `endBy1` endOfLine
        return $ [Items (map makeItem (zip headers vs)) | vs <- values]
     where
-        readHeader :: Parser [Tag]
-        readHeader = tag `endBy1` endOfLine
-
-        makeItem :: (String, Value) -> DataItem
-        makeItem (header, value) = Item header value
+        parseHeader :: Parser [Tag]
+        parseHeader = tag `endBy1` endOfLine
 
         parseLine :: Parser [Value]
-        parseLine =
-            do values <- (try getNumber <|> getString) `sepBy1` char ' '
-               return $ values
-            where
-                getString = liftM StringValue (singleQuotedString <|> doubleQuotedString <|> (many (oneOf nonBlankCharset)))
-                getNumber = liftM NumericValue num
-                    where
-                        num =
-                            do n <- try parseNumeric
-                               lookAhead (char ' ')
-                               return $ n
+        parseLine = (try getNumber <|> getString) `sepBy1` char ' '
+
+        getString = StringValue <$> (singleQuotedString <|> doubleQuotedString <|> nonBlankString)
+        getNumber = NumericValue <$> parseNumeric >>= \num -> lookAhead (char ' ') >> return num
 
 (<++>) a b = (++) <$> a <*> b
 (<:>) a b = (:) <$> a <*> b
@@ -144,23 +136,23 @@ float = fmap rd $ int <++> decimal <++> exponent <++> brackets
     where rd       = read :: String -> Float
           decimal  = char '.' <:> many digit
           exponent = option "" $ oneOf "eE" <:> int
-          brackets = option "" $ do {char '('; v <- int; char ')'; return $ v }
+          brackets = option "" $ (char '(') >> int >>= \num -> (char ')') >> return num
 
 parseNumeric :: Parser Numeric
-parseNumeric = liftM FloatValue (try float) <|> liftM IntValue (try integer)
+parseNumeric = FloatValue <$> (try float) <|> IntValue <$> (try integer)
 
 parseValue :: Parser Value
-parseValue = try (do {v <- liftM NumericValue parseNumeric; lookAhead endOfLine; return $ v}) <|> liftM StringValue charString
+parseValue = try (getNumeric) <|> getString
+    where
+        getNumeric  = NumericValue <$> parseNumeric >>= \x -> lookAhead endOfLine >> return  x
+        getString   = StringValue <$> charString
 
 tag = char '_' *> nonBlankString <?> "tag"
 
 dataItem :: Parser DataItem
-dataItem =
-        do tag <- tag
-           whiteSpace
-           value <- parseValue
-           whiteSpace
-           return $ Item tag value
+dataItem = tag >>= \t -> whiteSpace
+    >> parseValue >>= \value -> whiteSpace
+    >> return (Item t value)
 
 dataBlock :: Parser DataBlock
 dataBlock =
