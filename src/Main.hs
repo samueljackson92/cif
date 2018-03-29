@@ -55,7 +55,7 @@ data Cif = Cif [DataBlock] deriving (Show)
 escape :: Parser Char
 escape = do
     d <- char '\\'
-    c <- oneOf "\\\"\'0nrvtbf" -- all the characters which can be escaped
+    c <- oneOf "\\\"\'0nrvtbf"
     return c
 
 ordinaryString :: Parser String
@@ -68,12 +68,11 @@ anyPrintString :: Parser String
 anyPrintString = many (try escape <|> oneOf anyPrintCharset) <?> "any print string"
 
 parseQuotedString :: Char -> Parser String
-parseQuotedString c =
-    do
-       char c
-       value <- anyPrintString
-       char c
-       return $ value
+parseQuotedString c = do
+   char c
+   value <- anyPrintString
+   char c
+   return $ value
 
 singleQuotedString :: Parser String
 singleQuotedString = parseQuotedString singleQuote
@@ -84,59 +83,68 @@ doubleQuotedString = parseQuotedString doubleQuote
 unQuotedString :: Parser String
 unQuotedString = do
     many endOfLine
-    first <- oneOf (ordinaryCharset ++ [doubleQuote, singleQuote])
-    rest <- many (oneOf anyPrintCharset)
+    first <- oneOf $ ordinaryCharset ++ [doubleQuote, singleQuote]
+    rest <- many $ oneOf anyPrintCharset
     return $ first : rest
 
 textField :: Parser String
 textField =
     do
        whiteSpace
-       lines <- between (string ";\n") (char ';') (many (oneOf (textLeadCharset ++ "\n")))
+       lines <- colonSeperated multiLineString
        return $ lines
+    where multiLineString = many $ oneOf $ textLeadCharset ++ "\n"
+          colonSeperated = between (string ";\n") (char ';')
 
 charString :: Parser String
 charString = singleQuotedString <|> doubleQuotedString <|> textField <|> unQuotedString
 
-makeItem :: (String, Value) -> DataItem
-makeItem (header, value) = Item header value
-
 parseLoop :: Parser [DataItem]
 parseLoop =
-    do string "loop_"
+    do string "loop_" >> endOfLine
+       headers <- parseLoopHeader
+       entries <- parseEntries `manyTill` terminator
+       return $ [Items $ map makeItem $ zip headers values | values <- entries]
+    where terminator = try (lookAhead (string "_" <|> string "loop_" <|> (eof >> string "")))
+          makeItem (header, value) = Item header value
+
+parseLoopHeader :: Parser [Tag]
+parseLoopHeader =
+    do tags <- getTag `manyTill` terminator
+       return tags
+    where terminator = try (lookAhead (notFollowedBy (string "_")))
+          getTag     = tag >>= \t -> endOfLine >> return t
+
+parseEntries :: Parser [Value]
+parseEntries =
+    do values <- getEntry `sepBy1` char ' '
        endOfLine
-       headers <- parseHeader
-       values <- parseLine `manyTill` try (lookAhead (string "_" <|> string "loop_" <|> (eof >> string "")))
-       return $ [Items (map makeItem (zip headers vs)) | vs <- values]
-    where
-        parseHeader :: Parser [Tag]
-        parseHeader = do tags <- getTag `manyTill` try (lookAhead (notFollowedBy (string "_")))
-                         return tags
+       return values
+    where getEntry  = try getNumber <|> getString
+          getString = StringValue <$> (singleQuotedString <|> doubleQuotedString <|> nonBlankString)
+          getNumber = NumericValue <$> parseNumeric >>= \num -> lookAhead (char ' ') >> return num
 
-        parseLine :: Parser [Value]
-        parseLine =
-            do values <- (try getNumber <|> getString) `sepBy1` char ' '
-               endOfLine
-               return values
-
-        getTag = tag >>= \t -> endOfLine >> return t
-        getString = StringValue <$> (singleQuotedString <|> doubleQuotedString <|> nonBlankString)
-        getNumber = NumericValue <$> parseNumeric >>= \num -> lookAhead (char ' ') >> return num
 
 (<++>) a b = (++) <$> a <*> b
 (<:>) a b = (:) <$> a <*> b
 
+number :: Parser String
 number = try (many1 digit)
 
+plus :: Parser String
 plus = char '+' *> number
 
+minus :: Parser String
 minus = char '-' <:> number
 
+int :: Parser String
 int = plus <|> minus <|> number
 
+integer :: Parser Int
 integer = fmap rd $ int
     where rd = read :: String -> Int
 
+float :: Parser Float
 float = fmap rd $ int <++> decimal <++> exponent <++> brackets
     where rd       = read :: String -> Float
           decimal  = char '.' <:> many digit
@@ -148,16 +156,19 @@ parseNumeric = FloatValue <$> (try float) <|> IntValue <$> (try integer)
 
 parseValue :: Parser Value
 parseValue = try (getNumeric) <|> getString
-    where
-        getNumeric  = NumericValue <$> parseNumeric >>= \x -> lookAhead endOfLine >> return  x
-        getString   = StringValue <$> charString
+    where getNumeric  = NumericValue <$> parseNumeric >>= \x -> lookAhead endOfLine >> return  x
+          getString   = StringValue <$> charString
 
+tag :: Parser Tag
 tag = char '_' *> nonBlankString <?> "tag"
 
 dataItem :: Parser DataItem
-dataItem = tag >>= \t -> whiteSpace
-    >> parseValue >>= \value -> endOfLine
-    >> return (Item t value)
+dataItem =
+    do t <- tag
+       whiteSpace
+       value <- parseValue
+       endOfLine
+       return (Item t value)
 
 dataBlock :: Parser DataBlock
 dataBlock =
