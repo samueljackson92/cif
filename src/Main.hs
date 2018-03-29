@@ -103,18 +103,23 @@ makeItem (header, value) = Item header value
 
 parseLoop :: Parser [DataItem]
 parseLoop =
-    do reserved "LOOP_"
-       whiteSpace
+    do string "loop_"
+       endOfLine
        headers <- parseHeader
-       values <- parseLine `endBy1` endOfLine
+       values <- parseLine `manyTill` try (lookAhead (string "_" <|> string "loop_" <|> (eof >> string "")))
        return $ [Items (map makeItem (zip headers vs)) | vs <- values]
     where
         parseHeader :: Parser [Tag]
-        parseHeader = tag `endBy1` endOfLine
+        parseHeader = do tags <- getTag `manyTill` try (lookAhead (notFollowedBy (string "_")))
+                         return tags
 
         parseLine :: Parser [Value]
-        parseLine = (try getNumber <|> getString) `sepBy1` char ' '
+        parseLine =
+            do values <- (try getNumber <|> getString) `sepBy1` char ' '
+               endOfLine
+               return values
 
+        getTag = tag >>= \t -> endOfLine >> return t
         getString = StringValue <$> (singleQuotedString <|> doubleQuotedString <|> nonBlankString)
         getNumber = NumericValue <$> parseNumeric >>= \num -> lookAhead (char ' ') >> return num
 
@@ -151,24 +156,24 @@ tag = char '_' *> nonBlankString <?> "tag"
 
 dataItem :: Parser DataItem
 dataItem = tag >>= \t -> whiteSpace
-    >> parseValue >>= \value -> whiteSpace
+    >> parseValue >>= \value -> endOfLine
     >> return (Item t value)
 
 dataBlock :: Parser DataBlock
 dataBlock =
-    do header <- identifier
-       whiteSpace
+    do header <- string "data_" >> nonBlankString
+       endOfLine
        items <- many (dataItems <|> parseLoop)
        return $ DataBlock header (concat items)
     where
-        dataItems = dataItem `sepBy1` whiteSpace
+        dataItems = dataItem >>= \item -> return [item]
 
 cifBlock :: Parser Cif
 cifBlock =
     do blocks <- dataBlocks
        return $ Cif blocks
     where
-        dataBlocks = sepBy dataBlock whiteSpace
+        dataBlocks = many dataBlock
 
 whileParser :: Parser Cif
 whileParser = whiteSpace >> cifBlock
