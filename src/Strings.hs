@@ -1,10 +1,18 @@
+{-# LANGUAGE CPP, FlexibleContexts, Safe #-}
 module Strings where
 
+import Data.Char
 import Text.Parsec.Char
 import Text.ParserCombinators.Parsec
 
 import Utils
 import Grammar
+
+-- Match the lowercase or uppercase form of 'c'
+caseInsensitiveChar c = char (toLower c) <|> char (toUpper c)
+
+-- Match the string 's', accepting either lowercase or uppercase form of each character
+caseInsensitiveString s = try (mapM caseInsensitiveChar s) <?> "\"" ++ s ++ "\""
 
 ordinaryString :: Parser String
 ordinaryString = many (oneOf ordinaryCharset) <?> "ordinary string"

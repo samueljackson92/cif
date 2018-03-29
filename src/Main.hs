@@ -15,7 +15,7 @@ import Utils
 
 parseLoop :: Parser [DataItem]
 parseLoop =
-    do string "loop_" >> endOfLine
+    do reserved "LOOP_"
        headers <- parseLoopHeader
        entries <- parseEntries `manyTill` terminator
        return $ [Items $ map makeItem $ zip headers values | values <- entries]
@@ -60,22 +60,22 @@ dataItem =
 
 dataBlock :: Parser DataBlock
 dataBlock =
-    do header <- string "data_" >> nonBlankString
+    do caseInsensitiveString "data_"
+       header <- nonBlankString
        endOfLine
        items <- many (dataItems <|> parseLoop)
        return $ DataBlock header (concat items)
     where
         dataItems = dataItem >>= \item -> return [item]
 
-cifBlock :: Parser Cif
-cifBlock =
+parseCif :: Parser Cif
+parseCif =
     do blocks <- dataBlocks
        return $ Cif blocks
-    where
-        dataBlocks = many dataBlock
+    where dataBlocks = many dataBlock
 
 whileParser :: Parser Cif
-whileParser = whiteSpace >> cifBlock
+whileParser = whiteSpace >> parseCif
 
 parseCIFFile :: String -> IO Cif
 parseCIFFile file =
