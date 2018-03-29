@@ -13,13 +13,10 @@ languageDef =
                                      , "SAVE_"
                                      , "STOP_"
                                      ]
-            , Token.identStart = char '_' <|> alphaNum
-            , Token.identLetter = char '_' <|> alphaNum
             , Token.caseSensitive  = False
            }
 
 lexer = Token.makeTokenParser languageDef
-identifier = Token.identifier lexer
 reserved   = Token.reserved lexer
 whiteSpace = Token.whiteSpace lexer
 

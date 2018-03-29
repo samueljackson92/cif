@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, FlexibleContexts, Safe #-}
+{-# LANGUAGE CPP, FlexibleContexts #-}
 module Main where
 
 import System.Environment
@@ -29,7 +29,7 @@ parseLoopHeader =
     where terminator = try (lookAhead (notFollowedBy (string "_")))
           getTag     = tag >>= \t -> endOfLine >> return t
 
-parseEntries :: Parser [Value]
+parseEntries :: Parser [DataValue]
 parseEntries =
     do values <- getEntry `sepBy1` char ' '
        endOfLine
@@ -42,7 +42,7 @@ parseEntries =
 parseNumeric :: Parser Numeric
 parseNumeric = FloatValue <$> (try float) <|> IntValue <$> (try integer)
 
-parseValue :: Parser Value
+parseValue :: Parser DataValue
 parseValue = try (getNumeric) <|> getString
     where getNumeric  = NumericValue <$> parseNumeric >>= \x -> lookAhead endOfLine >> return  x
           getString   = StringValue <$> charString
